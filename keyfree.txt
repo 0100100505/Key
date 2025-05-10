@@ -1,0 +1,75 @@
+import json
+import requests
+from datetime import datetime, timedelta
+from flask import Flask, jsonify
+
+# Cấu hình
+SECRET = "my_secret_key"
+LINK4M_API = "6648c8f016f35d42cd052655"
+
+# Flask app
+app = Flask(__name__)
+
+# Hàm mã hóa XOR đơn giản
+def xor_crypt(data, key):
+    return ''.join(chr(ord(c) ^ ord(key[i % len(key)])) for i, c in enumerate(data))
+
+def enc(data):
+    raw = xor_crypt(data, SECRET)
+    return raw.encode('utf-8').hex()
+
+def dec(encrypted_data):
+    raw = bytes.fromhex(encrypted_data).decode('utf-8')
+    return xor_crypt(raw, SECRET)
+
+# Lấy IP người dùng (qua server gọi API)
+def get_ip_address():
+    try:
+        response = requests.get('https://api.ipify.org?format=json', timeout=5)
+        return response.json().get('ip')
+    except:
+        return None
+
+# Tạo key free dựa theo IP và ngày
+def generate_free_key(ip_address):
+    ngay = int(datetime.now().day)
+    key1 = str(ngay * 27 + 27)
+    ip_numbers = ''.join(filter(str.isdigit, ip_address))
+    key = f'NDK{key1}{ip_numbers}'
+    expiration = datetime.now().replace(hour=23, minute=59, second=0, microsecond=0)
+    return key, expiration
+
+# Rút gọn link bằng Link4m
+def shorten_link(original_url):
+    try:
+        api_url = f"https://link4m.co/api-shorten/v2?api={LINK4M_API}&url={original_url}"
+        response = requests.get(api_url, timeout=5)
+        data = response.json()
+        return data.get('shortenedUrl') if data.get('status') == 'success' else None
+    except Exception as e:
+        return None
+
+@app.route('/api/get-free-key', methods=['GET'])
+def get_key():
+    ip = get_ip_address()
+    if not ip:
+        return jsonify({'status': 'error', 'message': 'Không lấy được địa chỉ IP.'})
+
+    key, expire_time = generate_free_key(ip)
+    original_url = f"https://www.webkey.x10.mx/?ma={key}"
+    short_link = shorten_link(original_url)
+
+    if not short_link:
+        return jsonify({'status': 'error', 'message': 'Không thể rút gọn link.'})
+
+    return jsonify({
+        'status': 'success',
+        'ip': ip,
+        'key': key,
+        'expires_at': expire_time.strftime('%H:%M:%S - %d/%m/%Y'),
+        'shortened_url': short_link,
+        'note': 'Vượt link và nhập đúng key để dùng tool'
+    })
+
+if __name__ == '__main__':
+    app.run(debug=True, port=5000)
